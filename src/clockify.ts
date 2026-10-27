@@ -24,19 +24,27 @@ export class Clockify {
     return { userId: u.id, workspaceId: this.workspaceOverride || u.activeWorkspace || u.defaultWorkspace, name: u.name };
   }
 
-  /** Time entries starting in [from, to), as intervals. Running timers end at `now`. */
-  async entries(from: Date, to: Date, now: Date): Promise<Interval[]> {
-    const { userId, workspaceId } = await this.whoami();
-    const ws = `/workspaces/${workspaceId}`;
-
-    const projects = new Map<string, string>();
+  /** All projects in the workspace, active and archived. */
+  async projects(workspaceId: string): Promise<{ id: string; name: string; archived: boolean }[]> {
+    const out: { id: string; name: string; archived: boolean }[] = [];
     for (const archived of [false, true]) {
       for (let page = 1; page < 20; page++) {
-        const ps: any[] = await this.get(`${ws}/projects?archived=${archived}&page=${page}&page-size=200`);
-        for (const p of ps) projects.set(p.id, p.name);
+        const ps: any[] = await this.get(`/workspaces/${workspaceId}/projects?archived=${archived}&page=${page}&page-size=200`);
+        for (const p of ps) out.push({ id: p.id, name: p.name, archived });
         if (ps.length < 200) break;
       }
     }
+    return out;
+  }
+
+  /** Time entries starting in [from, to), as intervals. Running timers end at `now`. */
+  async entries(
+    from: Date, to: Date, now: Date,
+    pre?: { userId: string; workspaceId: string; projects: Map<string, string> },
+  ): Promise<Interval[]> {
+    const { userId, workspaceId } = pre ?? await this.whoami();
+    const ws = `/workspaces/${workspaceId}`;
+    const projects = pre?.projects ?? new Map((await this.projects(workspaceId)).map(p => [p.id, p.name] as const));
 
     const out: Interval[] = [];
     const size = 1000;

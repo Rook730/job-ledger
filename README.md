@@ -18,6 +18,7 @@ Frontmatter carries the headline numbers, so `Job Ledger.base` can trend them we
 
 - On startup: writes last week's note if it is missing or was written mid-week.
 - Commands: *Generate last week*, *Generate this week (to date)*, *Test connections*.
+- *Test connections* writes `Job Ledger/Connection Test.md` and opens it: Clockify status, projects without a job code, Clockify projects and vault notes whose names don't match exactly, this week's entries, and per-calendar status with sample coded events.
 - From Templater: `await app.plugins.plugins["job-ledger"].generateWeek(someDateInTheWeek)`.
 
 ## Settings

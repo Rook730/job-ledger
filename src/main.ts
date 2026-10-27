@@ -2,7 +2,7 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, normalizePath, r
 import { Clockify, Http } from "./clockify.ts";
 import { dedupe, parseIcs } from "./ics.ts";
 import { weekReport } from "./metrics.ts";
-import { DEFAULT_SETTINGS, Interval, Settings, addDays, weekStart, ymdDots } from "./model.ts";
+import { DEFAULT_SETTINGS, Interval, Settings, addDays, codeOf, weekStart, ymd, ymdDots } from "./model.ts";
 import { render } from "./render.ts";
 
 const http: Http = async (url, init) => {
@@ -95,25 +95,74 @@ export default class JobLedger extends Plugin {
     return file;
   }
 
+  /** Write a connection report to a note and open it. */
   async test() {
-    const lines: string[] = [];
-    if (!this.settings.clockifyKey) lines.push("Clockify: no API key");
+    const st = this.settings;
+    const now = new Date();
+    const from = weekStart(now), to = addDays(from, 14);
+    const DOWS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const stamp = (d: Date) => `${DOWS[d.getDay()]} ${ymd(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const list = (xs: string[]) => (xs.length ? xs.map(x => `  - ${x}`).join("\n") : "  - None");
+    const L: string[] = ["---", "type: ledger-test", `generated: ${now.toISOString()}`, "---",
+      "# Job Ledger connection test", `Run ${stamp(now)}. Week starts ${ymd(from)}.`, "", "## Clockify"];
+
+    // Notes in the vault that carry a job code, keyed by "CODE Name" (the expected Clockify project name)
+    const noteNames = new Set<string>();
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      const code = this.app.metadataCache.getFileCache(f)?.frontmatter?.code;
+      if (code && codeOf(String(code)) && f.basename.startsWith(String(code))) noteNames.add(f.basename);
+    }
+
+    if (!st.clockifyKey) L.push("- Status: **no API key set**");
     else {
       try {
-        const me = await new Clockify(http, this.settings.clockifyKey, this.settings.workspaceId).whoami();
-        lines.push(`Clockify: OK (${me.name}, workspace ${me.workspaceId})`);
-      } catch (e) { lines.push(`Clockify: ${(e as Error).message}`); }
+        const c = new Clockify(http, st.clockifyKey, st.workspaceId);
+        const me = await c.whoami();
+        const ps = await c.projects(me.workspaceId);
+        const active = ps.filter(p => !p.archived);
+        const pm = new Map(ps.map(p => [p.id, p.name] as const));
+        const es = await c.entries(from, addDays(from, 7), now, { userId: me.userId, workspaceId: me.workspaceId, projects: pm });
+        const h = es.reduce((s, e) => s + (e.end.getTime() - e.start.getTime()), 0) / 3600_000;
+        const noCode = es.filter(e => !e.code);
+        const activeNames = new Set(active.map(p => p.name));
+        L.push("- Status: OK",
+          `- User: ${me.name}`,
+          `- Workspace: ${me.workspaceId}`,
+          `- Projects: ${active.length} active, ${ps.length - active.length} archived`,
+          "- Active projects without a job code:", list(active.filter(p => !codeOf(p.name)).map(p => p.name)),
+          "- Active coded projects with no matching note (name must equal the note name):",
+          list(active.filter(p => codeOf(p.name) && !noteNames.has(p.name)).map(p => p.name)),
+          "- Coded notes with no matching active project:", list([...noteNames].filter(n => !activeNames.has(n)).sort()),
+          `- This week so far: ${es.length} entries, ${h.toFixed(1)} h, ${noCode.length} without a job code`);
+        if (noCode.length) L.push(list([...new Set(noCode.map(e => e.label))]));
+      } catch (e) { L.push(`- Status: **${(e as Error).message}**`); }
     }
-    const from = weekStart(new Date()), to = addDays(from, 14);
-    for (const c of this.settings.calendars.filter(c => c.enabled)) {
+
+    L.push("", "## Calendars");
+    if (!st.calendars.length) L.push("- None configured");
+    for (const cal of st.calendars) {
+      L.push("", `### ${cal.name}`);
+      if (!cal.enabled) { L.push("- Disabled"); continue; }
       const issues: string[] = [];
-      const saved = this.settings.calendars;
-      this.settings.calendars = [c];
+      const saved = st.calendars;
+      st.calendars = [cal];
       const ev = await this.fetchCalendars(from, to, issues);
-      this.settings.calendars = saved;
-      lines.push(issues.length ? `${c.name}: ${issues[0]}` : `${c.name}: OK (${ev.length} timed events this week and next)`);
+      st.calendars = saved;
+      if (issues.length) { L.push(`- Status: **${issues[0]}**`); continue; }
+      const coded = ev.filter(e => e.code).sort((a, b) => a.start.getTime() - b.start.getTime());
+      L.push("- Status: OK",
+        `- Timed events this week and next: ${ev.length} (${coded.length} coded, ${ev.length - coded.length} uncoded)`,
+        "- First coded events:", list(coded.slice(0, 5).map(e => `${stamp(e.start)} ${e.label}`)));
     }
-    new Notice(lines.join("\n"), 15000);
+
+    const folder = normalizePath(st.folder);
+    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+    const path = normalizePath(`${folder}/Connection Test.md`);
+    const text = L.join("\n") + "\n";
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    const file = existing instanceof TFile ? existing : await this.app.vault.create(path, text);
+    if (existing instanceof TFile) await this.app.vault.modify(existing, text);
+    await this.app.workspace.getLeaf(true).openFile(file);
   }
 }
 
