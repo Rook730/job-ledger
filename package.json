@@ -1,0 +1,25 @@
+{
+  "name": "job-ledger",
+  "version": "0.1.0",
+  "description": "Obsidian plugin: weekly plan-vs-actual from Clockify and ICS calendars",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "esbuild test/run.ts --bundle --platform=node --format=esm --outfile=test/.out.mjs --log-level=warning && TZ=America/New_York node test/.out.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "builtin-modules": "^5.4.0",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.14.4",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "ical.js": "^2.2.1"
+  },
+  "type": "module"
+}

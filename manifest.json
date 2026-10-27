@@ -1,0 +1,9 @@
+{
+  "id": "job-ledger",
+  "name": "Job Ledger",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Weekly plan-vs-actual and fragmentation report from Clockify and ICS calendars, keyed by job code.",
+  "author": "Nick",
+  "isDesktopOnly": true
+}
