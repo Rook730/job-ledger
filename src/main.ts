@@ -151,8 +151,19 @@ export default class JobLedger extends Plugin {
       st.calendars = saved;
       if (issues.length) { L.push(`- Status: **${issues[0]}**`); continue; }
       const coded = ev.filter(e => e.code).sort((a, b) => a.start.getTime() - b.start.getTime());
+      // Whole-feed diagnostics: tells "empty calendar" apart from "events outside the window" or "all-day only"
+      let feed = "";
+      try {
+        const raw = (await requestUrl({ url: icsUrl(cal.url), throw: false })).text;
+        const vevents = (raw.match(/^BEGIN:VEVENT/gm) ?? []).length;
+        const allDay = (raw.match(/^DTSTART;VALUE=DATE:/gm) ?? []).length;
+        const wide = parseIcs(raw, cal.name, addDays(now, -365), addDays(now, 365)).sort((a, b) => a.start.getTime() - b.start.getTime());
+        const span = wide.length ? `${stamp(wide[0].start)} to ${stamp(wide[wide.length - 1].start)}` : "none";
+        feed = `- Whole feed: ${vevents} events defined (${allDay} all-day, ignored). Timed occurrences within a year either side: ${wide.length}, ${span}`;
+      } catch (e) { feed = `- Whole feed: could not inspect (${(e as Error).message})`; }
       L.push("- Status: OK",
         `- Timed events this week and next: ${ev.length} (${coded.length} coded, ${ev.length - coded.length} uncoded)`,
+        feed,
         "- First coded events:", list(coded.slice(0, 5).map(e => `${stamp(e.start)} ${e.label}`)));
     }
 
