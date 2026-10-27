@@ -52,9 +52,10 @@ export function render(r: WeekReport, st: Settings, generated: Date, degraded = 
   L.push("## Plan vs actual",
     "| Code | Name | Planned | Actual | Δ | On-plan |", "|---|---|--:|--:|--:|--:|");
   for (const c of r.codes) {
-    const name = c.label.replace(c.code, "").trim();
-    const cell = c.project && c.project.startsWith(c.code) ? `[[${c.project}\\|${c.code}]]` : c.code;
-    const flag = c.planned === 0 ? " (unplanned)" : c.actual === 0 ? " (skipped)" : "";
+    const none = c.code.startsWith("(no code)");
+    const name = none ? c.label : c.label.replace(c.code, "").trim();
+    const cell = none ? "(no code)" : c.project && c.project.startsWith(c.code) ? `[[${c.project}\\|${c.code}]]` : c.code;
+    const flag = none ? "" : c.planned === 0 ? " (unplanned)" : c.actual === 0 ? " (skipped)" : "";
     L.push(`| ${cell} | ${pad(name)}${flag} | ${h(c.planned)} | ${h(c.actual)} | ${signed(c.actual - c.planned)} | ${h(c.onPlan)} |`);
   }
   L.push(`| **Total** | | **${h(r.planned)}** | **${h(r.actual)}** | **${signed(r.actual - r.planned)}** | |`, "");

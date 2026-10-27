@@ -106,6 +106,9 @@ assert.equal(entries.length, 7);
 
 const bl = blocks(entries, 5);
 assert.equal(bl.length, 6, "two Monday entries merge into one block");
+// Two different uncoded projects back to back must stay separate blocks
+const u = (h0: number, h1: number, name: string): Interval => ({ start: new Date(2026, 9, 23, h0), end: new Date(2026, 9, 23, h1), code: null, label: name, source: "Clockify" });
+assert.equal(blocks([u(9, 10, "Travel"), u(10, 12, "Kitchen")], 5).length, 2, "uncoded projects do not merge");
 
 const r = weekReport(mon, new Date(2026, 10, 1), entries, ev, ev, DEFAULT_SETTINGS, []);
 console.log(JSON.stringify({ ...r, codes: r.codes, days: r.days, divisions: r.divisions }, (k, v) => typeof v === "number" ? Math.round(v * 100) / 100 : v, 1).slice(0, 2500));
@@ -119,6 +122,7 @@ assert.equal(r.commitments, 1);                            // dentist 13:00-14:0
 assert.equal(r.next.planned, 2.5);
 assert.equal(r.days.find(d => d.date === "2026-10-20")!.switches, 2);
 assert.ok(r.issues.some(i => i.includes("no job code")));
+assert.ok(r.codes.some(c => c.code === "(no code) Old stuff") && r.codes.some(c => c.code === "(no code) (no project)"), "uncoded rows split by project");
 assert.equal(Math.round(r.actualOutside * 60), 60 + 20);   // 16-17 on Wed, 08:00-08:20 Thu
 
 const md = render(r, DEFAULT_SETTINGS, new Date(2026, 10, 1));

@@ -29,13 +29,15 @@ export interface WeekReport {
 }
 
 const KEY_NONE = "(no code)";
+/** Coded entries group by code; uncoded entries group by their own project name, so switches between them count. */
+const keyOf = (e: Interval) => e.code ?? `${KEY_NONE} ${e.label}`;
 
 /** Group same-code entries into blocks when the gap between them is small. */
 export function blocks(entries: Interval[], gapMin: number): Block[] {
   const s = [...entries].sort((a, b) => a.start.getTime() - b.start.getTime());
   const out: Block[] = [];
   for (const e of s) {
-    const code = e.code ?? KEY_NONE;
+    const code = keyOf(e);
     const last = out[out.length - 1];
     const sameDay = last && last.start.toDateString() === e.start.toDateString();
     if (last && sameDay && last.code === code && e.start.getTime() - last.end.getTime() <= gapMin * 60_000) {
@@ -60,10 +62,10 @@ export function weekReport(
   const uncoded = events.filter(e => !e.code);
 
   // ---- plan vs actual per code ----
-  const codeSet = new Set<string>([...coded.map(e => e.code!), ...entries.map(e => e.code ?? KEY_NONE)]);
+  const codeSet = new Set<string>([...coded.map(e => e.code!), ...entries.map(keyOf)]);
   const codes: CodeRow[] = [...codeSet].sort().map(code => {
     const p = coded.filter(e => e.code === code);
-    const a = entries.filter(e => (e.code ?? KEY_NONE) === code);
+    const a = entries.filter(e => keyOf(e) === code);
     const label = a[0]?.label ?? p[0]?.label ?? "";
     return { code, label, project: a[0]?.label ?? null, planned: hrs(total(p)), actual: hrs(total(a)), onPlan: hrs(overlap(p, a)) };
   });
@@ -96,7 +98,7 @@ export function weekReport(
   });
   const divMap = new Map<string, Block[]>();
   for (const b of bl) {
-    const d = b.code === KEY_NONE ? KEY_NONE : divisionOf(b.code);
+    const d = b.code.startsWith(KEY_NONE) ? KEY_NONE : divisionOf(b.code);
     if (!divMap.has(d)) divMap.set(d, []);
     divMap.get(d)!.push(b);
   }
