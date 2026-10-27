@@ -8,7 +8,8 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const md = (d: Date) => `${MON[d.getMonth()]} ${d.getDate()}`;
 const pad = (s: string) => s.replace(/\|/g, "\\|");
 
-export function render(r: WeekReport, st: Settings, generated: Date): string {
+/** degraded: a source was missing or failed, so the note must not be treated as final. */
+export function render(r: WeekReport, st: Settings, generated: Date, degraded = false): string {
   const inProgress = r.through < addDays(r.monday, 7);
   const days = st.workdays.map(d => DOW[d]).join(", ");
   const L: string[] = [];
@@ -18,7 +19,7 @@ export function render(r: WeekReport, st: Settings, generated: Date): string {
     "uplink: []",
     `week_start: ${ymd(r.monday)}`,
     `week_end: ${ymd(r.sunday)}`,
-    `complete: ${!inProgress}`,
+    `complete: ${!inProgress && !degraded}`,
     `available_h: ${h(r.available)}`,
     `planned_h: ${h(r.planned)}`,
     `actual_h: ${h(r.actual)}`,
@@ -33,6 +34,7 @@ export function render(r: WeekReport, st: Settings, generated: Date): string {
     `# Job Ledger: ${md(r.monday)} to ${md(r.sunday)} ${r.sunday.getFullYear()}`,
     "");
   if (inProgress) L.push(`> [!note] Week in progress. Actuals through ${generated.toLocaleString()}.`, "");
+  if (degraded) L.push("> [!warning] A data source was missing or failed (see Data issues). This note will be regenerated on next startup.", "");
 
   L.push("## Summary",
     "| Measure | Value |", "|---|---|",

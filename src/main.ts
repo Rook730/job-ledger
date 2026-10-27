@@ -81,9 +81,10 @@ export default class JobLedger extends Plugin {
     }
     if (!st.calendars.some(c => c.enabled && c.url.trim())) issues.push("No calendars configured. Plan figures are empty.");
     const events = await this.fetchCalendars(monday, addDays(monday, 14), issues);
+    const degraded = issues.length > 0;   // source-level problems only; data-quality issues are added below
 
     const report = weekReport(monday, now, entries, events, events, st, issues);
-    const text = render(report, st, now);
+    const text = render(report, st, now, degraded);
 
     const path = this.pathFor(monday);
     const folder = normalizePath(st.folder);
