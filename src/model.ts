@@ -9,6 +9,7 @@ export interface Interval {
   code: string | null;   // e.g. "CW-25002", null if none found
   label: string;         // project name or event title
   source: string;        // "Clockify" or calendar name
+  tags?: string[];       // Clockify tag names (activity)
 }
 
 export interface Settings {
@@ -22,6 +23,7 @@ export interface Settings {
   deepMinutes: number;           // a block this long or longer counts as deep work
   mergeGapMinutes: number;       // same-code entries this close are one block
   autoRun: boolean;
+  tags: string[];                // activity tags to keep in Clockify
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -35,11 +37,17 @@ export const DEFAULT_SETTINGS: Settings = {
   deepMinutes: 90,
   mergeGapMinutes: 5,
   autoRun: true,
+  tags: ["Travel", "Install", "Fab", "Site visit", "Design", "PM", "Concierge", "Admin", "Estimating"],
 };
 
 export const codeOf = (s: string | null | undefined): string | null => {
   const m = (s ?? "").match(CODE_RE);
   return m ? m[0] : null;
+};
+/** Work codes share one number per job; PR and CK have their own sequences and never roll up. */
+export const jobNumberOf = (code: string | null): string | null => {
+  const m = (code ?? "").match(/^(CE|CW|KS)-(\d{5})$/);
+  return m ? m[2] : null;
 };
 export const divisionOf = (code: string | null): string => (code ? code.slice(0, 2) : "(none)");
 

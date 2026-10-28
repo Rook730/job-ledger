@@ -60,6 +60,22 @@ export function render(r: WeekReport, st: Settings, generated: Date, degraded = 
   }
   L.push(`| **Total** | | **${h(r.planned)}** | **${h(r.actual)}** | **${signed(r.actual - r.planned)}** | |`, "");
 
+  const split = r.jobs.filter(j => j.split.length > 1);
+  if (split.length) {
+    L.push("### Jobs split across divisions",
+      "| Job | Name | Planned | Actual | Split |", "|---|---|--:|--:|---|");
+    for (const j of split)
+      L.push(`| ${j.job} | ${pad(j.name)} | ${h(j.planned)} | ${h(j.actual)} | ${j.split.map(x => `${x.code.slice(0, 2)} ${h(x.actual)}`).join(", ")} |`);
+    L.push("");
+  }
+
+  L.push("## Hours by activity",
+    "Clockify tags. An entry with more than one tag counts toward each.",
+    "", "| Activity | Hours | Entries | Codes |", "|---|--:|--:|---|");
+  for (const a of r.activities) L.push(`| ${pad(a.tag)} | ${h(a.hours)} | ${a.entries} | ${a.codes.join(", ")} |`);
+  if (!r.activities.length) L.push("| (no entries) | | | |");
+  L.push("");
+
   L.push("## Fragmentation",
     `Blocks merge same-code entries less than ${st.mergeGapMinutes} min apart. A switch is a change of code between consecutive blocks.`,
     "",

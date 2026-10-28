@@ -8,11 +8,20 @@ Obsidian plugin (desktop only). Builds a weekly note from Clockify time entries 
 
 - **Summary:** available hours, uncoded commitments, planned, actual, outside-window, on-plan %, deep-block %, switches per day, median block.
 - **Plan vs actual per code:** planned = calendar events whose title contains a job code; actual = Clockify entries whose project name contains a job code; on-plan = actual time that overlaps a planned block of the same code.
+- **Jobs split across divisions:** work jobs (CE, CW, KS) that appear under more than one prefix (e.g. `KS-26005` PM and `CW-26005` install) rolled up by number. PR and CK never roll up.
+- **Hours by activity:** Clockify tags, with the codes each one touched.
 - **Fragmentation by day and by division:** same-code entries less than the merge gap apart form one block.
 - **Next week:** coded hours already blocked, commitments, unscheduled window time, and an overcommit warning.
 - **Data issues:** failed calendar fetches, entries without a job code. Failures are listed, never silent.
 
 Frontmatter carries the headline numbers, so `Job Ledger.base` can trend them week over week.
+
+## Clockify sync
+
+*Sync projects to Clockify* finds every note whose `code` property is a job code and whose name starts with it, then creates the matching Clockify project (same name), its client (from the note's `client` property), and any missing activity tags from settings. It writes a preview to `Job Ledger/Clockify Sync.md` and asks before creating anything. It never renames, archives, or deletes.
+
+- Billable: on for CE/CW/KS jobs, off for `-OH`, PR, and CK. Override with `billable: false` (or `true`) in the note.
+- Left alone and listed: names that exist only as archived projects, and names that differ only in case.
 
 ## Runs
 

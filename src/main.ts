@@ -1,9 +1,10 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, normalizePath, requestUrl } from "obsidian";
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, normalizePath, requestUrl } from "obsidian";
 import { Clockify, Http } from "./clockify.ts";
 import { dedupe, parseIcs } from "./ics.ts";
 import { weekReport } from "./metrics.ts";
 import { DEFAULT_SETTINGS, Interval, Settings, addDays, codeOf, weekStart, ymd, ymdDots } from "./model.ts";
 import { render } from "./render.ts";
+import { CodedNote, SyncPlan, planIsEmpty, planSync, renderPlan } from "./sync.ts";
 
 const http: Http = async (url, init) => {
   const r = await requestUrl({ url, method: init.method ?? "GET", headers: init.headers, body: init.body, throw: false });
@@ -18,12 +19,13 @@ export default class JobLedger extends Plugin {
   settings!: Settings;
 
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(structuredClone(DEFAULT_SETTINGS), await this.loadData());
     this.addSettingTab(new LedgerSettings(this.app, this));
 
     this.addCommand({ id: "generate-last-week", name: "Generate last week", callback: () => this.run(addDays(new Date(), -7)) });
     this.addCommand({ id: "generate-this-week", name: "Generate this week (to date)", callback: () => this.run(new Date()) });
     this.addCommand({ id: "test-connections", name: "Test connections", callback: () => this.test() });
+    this.addCommand({ id: "sync-clockify", name: "Sync projects to Clockify", callback: () => this.sync() });
 
     this.app.workspace.onLayoutReady(() => { if (this.settings.autoRun) void this.autoRun(); });
   }
@@ -96,6 +98,73 @@ export default class JobLedger extends Plugin {
     return file;
   }
 
+  private async writeNote(name: string, text: string, open: boolean): Promise<TFile> {
+    const folder = normalizePath(this.settings.folder);
+    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+    const path = normalizePath(`${folder}/${name}.md`);
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    const file = existing instanceof TFile ? existing : await this.app.vault.create(path, text);
+    if (existing instanceof TFile) await this.app.vault.modify(existing, text);
+    if (open) await this.app.workspace.getLeaf(false).openFile(file);
+    return file;
+  }
+
+  /** Notes whose `code` property is a job code and whose name starts with it. The name is the Clockify project name. */
+  codedNotes(): CodedNote[] {
+    const out: CodedNote[] = [];
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (f.path.startsWith("Templates/")) continue;
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+      const code = String(fm?.code ?? "");
+      if (!code || codeOf(code) !== code || !f.basename.startsWith(code)) continue;
+      out.push({ name: f.basename, code, client: String(fm?.client ?? "").trim(), billable: typeof fm?.billable === "boolean" ? fm.billable : null });
+    }
+    return out;
+  }
+
+  /** Preview what is missing in Clockify, confirm, then create it. */
+  async sync() {
+    const st = this.settings;
+    if (!st.clockifyKey) { new Notice("Job Ledger: set the Clockify API key first."); return; }
+    const c = new Clockify(http, st.clockifyKey, st.workspaceId);
+    let ws = "", plan: SyncPlan;
+    try {
+      ws = (await c.whoami()).workspaceId;
+      const [ps, cs, ts] = await Promise.all([c.projects(ws), c.clients(ws), c.tags(ws)]);
+      plan = planSync(this.codedNotes(), ps, cs, ts, st.tags);
+    } catch (e) { new Notice(`Job Ledger sync failed: ${(e as Error).message}`, 10000); return; }
+
+    await this.writeNote("Clockify Sync", renderPlan(plan, "Clockify sync: preview (nothing created yet)"), true);
+    if (planIsEmpty(plan)) { new Notice("Job Ledger: Clockify already matches your coded notes."); return; }
+
+    const ok = await confirm(this.app,
+      `Create ${plan.createProjects.length} project(s), ${plan.createClients.length} client(s), and ${plan.createTags.length} tag(s) in Clockify? The preview note lists them.`);
+    if (!ok) { new Notice("Job Ledger: sync cancelled. Nothing created."); return; }
+
+    const results: string[] = [];
+    try {
+      const clientIds = new Map((await c.clients(ws)).filter(x => !x.archived).map(x => [x.name.toLowerCase(), x.id] as const));
+      for (const name of plan.createClients) {
+        try { clientIds.set(name.toLowerCase(), await c.createClient(ws, name)); results.push(`Created client ${name}`); }
+        catch (e) { results.push(`**Failed** client ${name}: ${(e as Error).message}`); }
+      }
+      for (const p of plan.createProjects) {
+        try {
+          await c.createProject(ws, { name: p.name, clientId: p.client ? clientIds.get(p.client.toLowerCase()) : undefined, billable: p.billable });
+          results.push(`Created project ${p.name}`);
+        } catch (e) { results.push(`**Failed** project ${p.name}: ${(e as Error).message}`); }
+      }
+      for (const t of plan.createTags) {
+        try { await c.createTag(ws, t); results.push(`Created tag ${t}`); }
+        catch (e) { results.push(`**Failed** tag ${t}: ${(e as Error).message}`); }
+      }
+    } catch (e) { results.push(`**Failed**: ${(e as Error).message}`); }
+
+    await this.writeNote("Clockify Sync", renderPlan(plan, `Clockify sync: applied ${ymd(new Date())}`, results), true);
+    const failed = results.filter(r => r.startsWith("**Failed")).length;
+    new Notice(`Job Ledger: sync done. ${results.length - failed} created${failed ? `, ${failed} failed` : ""}.`, 8000);
+  }
+
   /** Write a connection report to a note and open it. */
   async test() {
     const st = this.settings;
@@ -108,11 +177,7 @@ export default class JobLedger extends Plugin {
       "# Job Ledger connection test", `Run ${stamp(now)}. Week starts ${ymd(from)}.`, "", "## Clockify"];
 
     // Notes in the vault that carry a job code, keyed by "CODE Name" (the expected Clockify project name)
-    const noteNames = new Set<string>();
-    for (const f of this.app.vault.getMarkdownFiles()) {
-      const code = this.app.metadataCache.getFileCache(f)?.frontmatter?.code;
-      if (code && codeOf(String(code)) && f.basename.startsWith(String(code))) noteNames.add(f.basename);
-    }
+    const noteNames = new Set(this.codedNotes().map(n => n.name));
 
     if (!st.clockifyKey) L.push("- Status: **no API key set**");
     else {
@@ -167,15 +232,22 @@ export default class JobLedger extends Plugin {
         "- First coded events:", list(coded.slice(0, 5).map(e => `${stamp(e.start)} ${e.label}`)));
     }
 
-    const folder = normalizePath(st.folder);
-    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
-    const path = normalizePath(`${folder}/Connection Test.md`);
-    const text = L.join("\n") + "\n";
-    const existing = this.app.vault.getAbstractFileByPath(path);
-    const file = existing instanceof TFile ? existing : await this.app.vault.create(path, text);
-    if (existing instanceof TFile) await this.app.vault.modify(existing, text);
-    await this.app.workspace.getLeaf(true).openFile(file);
+    await this.writeNote("Connection Test", L.join("\n") + "\n", true);
   }
+}
+
+function confirm(app: App, message: string): Promise<boolean> {
+  return new Promise(resolve => {
+    let answered = false;
+    const m = new Modal(app);
+    m.titleEl.setText("Job Ledger");
+    m.contentEl.createEl("p", { text: message });
+    new Setting(m.contentEl)
+      .addButton(b => b.setButtonText("Cancel").onClick(() => { answered = true; m.close(); resolve(false); }))
+      .addButton(b => b.setButtonText("Create").setCta().onClick(() => { answered = true; m.close(); resolve(true); }));
+    m.onClose = () => { if (!answered) resolve(false); };
+    m.open();
+  });
 }
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -228,6 +300,12 @@ class LedgerSettings extends PluginSettingTab {
       .addText(t => t.setValue(String(st.mergeGapMinutes)).onChange(v => { const n = parseInt(v); if (n >= 0) { st.mergeGapMinutes = n; void save(); } }));
     new Setting(containerEl).setName("Generate last week on startup").setDesc("Skipped if last week's note is already final.")
       .addToggle(t => t.setValue(st.autoRun).onChange(v => { st.autoRun = v; void save(); }));
-    new Setting(containerEl).addButton(b => b.setButtonText("Test connections").setCta().onClick(() => this.plugin.test()));
+
+    new Setting(containerEl).setName("Clockify sync").setHeading();
+    new Setting(containerEl).setName("Activity tags").setDesc("Comma-separated. Sync creates any that are missing in Clockify; it never deletes or renames.")
+      .addTextArea(t => t.setValue(st.tags.join(", ")).onChange(v => { st.tags = v.split(",").map(x => x.trim()).filter(Boolean); void save(); }));
+    new Setting(containerEl)
+      .addButton(b => b.setButtonText("Sync projects to Clockify").onClick(() => this.plugin.sync()))
+      .addButton(b => b.setButtonText("Test connections").setCta().onClick(() => this.plugin.test()));
   }
 }

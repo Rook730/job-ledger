@@ -5,6 +5,7 @@ import { weekReport, blocks } from "../src/metrics.ts";
 import { render } from "../src/render.ts";
 import { Clockify } from "../src/clockify.ts";
 import { DEFAULT_SETTINGS, Interval, weekStart, addDays } from "../src/model.ts";
+import { planSync, defaultBillable, renderPlan } from "../src/sync.ts";
 
 const ICS = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -88,7 +89,9 @@ const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).toISOStri
 const fake = async (url: string) => {
   if (url.endsWith("/user")) return { status: 200, text: "", json: { id: "u1", activeWorkspace: "w1", name: "Nick" } };
   if (url.includes("/projects?archived=false")) return { status: 200, text: "", json: [
-    { id: "p1", name: "CE-26002 Tandem machine" }, { id: "p2", name: "BZ-OH Shared admin" }, { id: "p3", name: "Old stuff" }] };
+    { id: "p1", name: "CE-26002 Tandem machine" }, { id: "p2", name: "BZ-OH Shared admin" }, { id: "p3", name: "Old stuff" },
+    { id: "p4", name: "KS-26005 Kitchen renovation" }, { id: "p5", name: "CW-26005 Kitchen renovation" }, { id: "p6", name: "PR-26005 Shed" }] };
+  if (url.includes("/tags")) return { status: 200, text: "", json: [{ id: "t1", name: "Travel" }, { id: "t2", name: "Install" }, { id: "t3", name: "PM" }] };
   if (url.includes("/projects")) return { status: 200, text: "", json: [] };
   if (url.includes("/time-entries")) return { status: 200, text: "", json: [
     { projectId: "p1", timeInterval: { start: at(19, 9), end: at(19, 11) } },          // 2h on plan
@@ -98,14 +101,18 @@ const fake = async (url: string) => {
     { projectId: "p2", timeInterval: { start: at(20, 10, 30), end: at(20, 10, 45) } },  // switch
     { projectId: "p3", timeInterval: { start: at(21, 16), end: at(21, 17) } },          // uncoded, outside window
     { projectId: null, timeInterval: { start: at(22, 8), end: at(22, 8, 20) } },        // no project
+    { projectId: "p4", tagIds: ["t3"], timeInterval: { start: at(23, 9), end: at(23, 10) } },        // KS-26005 PM 1h
+    { projectId: "p5", tagIds: ["t2"], timeInterval: { start: at(23, 10), end: at(23, 12) } },       // CW-26005 Install 2h
+    { projectId: "p5", tagIds: ["t1", "t2"], timeInterval: { start: at(23, 12), end: at(23, 12, 30) } }, // two tags
+    { projectId: "p6", timeInterval: { start: at(24, 9), end: at(24, 10) } },                        // PR-26005: must not roll up
   ] };
   throw new Error("unexpected " + url);
 };
 const entries: Interval[] = await new Clockify(fake as any, "k").entries(mon, addDays(mon, 7), new Date(2026, 10, 1));
-assert.equal(entries.length, 7);
+assert.equal(entries.length, 11);
 
 const bl = blocks(entries, 5);
-assert.equal(bl.length, 6, "two Monday entries merge into one block");
+assert.equal(bl.length, 9, "two Monday entries merge; KS/CW switch on Fri; Sat separate");
 // Two different uncoded projects back to back must stay separate blocks
 const u = (h0: number, h1: number, name: string): Interval => ({ start: new Date(2026, 9, 23, h0), end: new Date(2026, 9, 23, h1), code: null, label: name, source: "Clockify" });
 assert.equal(blocks([u(9, 10, "Travel"), u(10, 12, "Kitchen")], 5).length, 2, "uncoded projects do not merge");
@@ -123,7 +130,57 @@ assert.equal(r.next.planned, 2.5);
 assert.equal(r.days.find(d => d.date === "2026-10-20")!.switches, 2);
 assert.ok(r.issues.some(i => i.includes("no job code")));
 assert.ok(r.codes.some(c => c.code === "(no code) Old stuff") && r.codes.some(c => c.code === "(no code) (no project)"), "uncoded rows split by project");
-assert.equal(Math.round(r.actualOutside * 60), 60 + 20);   // 16-17 on Wed, 08:00-08:20 Thu
+assert.equal(Math.round(r.actualOutside * 60), 60 + 20 + 60);   // 16-17 Wed, 08:00-08:20 Thu, Sat 9-10
+
+// Job rollup: 26005 = KS 1h + CW 2.5h; PR-26005 excluded; CE-26002 single
+const j = r.jobs.find(x => x.job === "26005")!;
+assert.equal(j.split.length, 2);
+assert.equal(j.actual, 3.5);
+assert.equal(j.name, "Kitchen renovation");
+assert.ok(!r.jobs.some(x => x.split.some(s => s.code.startsWith("PR"))), "PR never rolls up with work");
+// Activities: Install = 2h + 0.5h, Travel = 0.5h, PM = 1h, two-tag entry counted in both
+const act = (t: string) => r.activities.find(a => a.tag === t)!;
+assert.equal(act("Install").hours, 2.5);
+assert.equal(act("Travel").hours, 0.5);
+assert.equal(act("PM").hours, 1);
+assert.equal(r.activities[r.activities.length - 1].tag, "(untagged)");
+
+// Sync planning
+assert.equal(defaultBillable("KS-26005"), true);
+assert.equal(defaultBillable("CW-OH"), false);
+assert.equal(defaultBillable("PR-26001"), false);
+assert.equal(defaultBillable("CK-26001"), false);
+const plan = planSync(
+  [
+    { name: "KS-26005 Kitchen renovation", code: "KS-26005", client: "Hotch", billable: null },   // present
+    { name: "CW-26005 Kitchen renovation", code: "CW-26005", client: "Hotch", billable: null },   // missing, client exists
+    { name: "CW-26006 Box build", code: "CW-26006", client: "Borg Warner", billable: null },      // missing, new client
+    { name: "CW-26003 Winter market", code: "CW-26003", client: "Fernleaf", billable: false },    // explicit false
+    { name: "CE-26002 Tandem machine", code: "CE-26002", client: "MGM Brakes", billable: null },  // archived match
+    { name: "CW-OH Overhead", code: "CW-OH", client: "", billable: null },                         // case mismatch
+    { name: "PR-26001 West side yard", code: "PR-26001", client: "", billable: null },
+  ],
+  [
+    { id: "a", name: "KS-26005 Kitchen renovation", archived: false },
+    { id: "b", name: "CE-26002 Tandem machine", archived: true },
+    { id: "c", name: "CW-OH overhead", archived: false },
+  ],
+  [{ id: "c1", name: "hotch", archived: false }],
+  [{ id: "t1", name: "travel", archived: false }],
+  ["Travel", "Install", "Install", " "],
+);
+assert.equal(plan.alreadyPresent, 1);
+assert.deepEqual(plan.createProjects.map(p => `${p.name}|${p.client}|${p.billable}`), [
+  "CW-26003 Winter market|Fernleaf|false",
+  "CW-26005 Kitchen renovation|Hotch|true",
+  "CW-26006 Box build|Borg Warner|true",
+  "PR-26001 West side yard||false",
+]);
+assert.deepEqual(plan.createClients.sort(), ["Borg Warner", "Fernleaf"]);
+assert.deepEqual(plan.createTags, ["Install"]);
+assert.deepEqual(plan.archivedMatches, ["CE-26002 Tandem machine"]);
+assert.equal(plan.caseMismatches.length, 1);
+console.log("\n" + renderPlan(plan, "Clockify sync: preview"));
 
 const md = render(r, DEFAULT_SETTINGS, new Date(2026, 10, 1));
 assert.ok(!md.includes("—"), "no em dashes");
