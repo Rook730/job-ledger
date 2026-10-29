@@ -23,7 +23,7 @@ export interface Settings {
   deepMinutes: number;           // a block this long or longer counts as deep work
   mergeGapMinutes: number;       // same-code entries this close are one block
   autoRun: boolean;
-  tags: string[];                // activity tags to keep in Clockify
+  tagsNote: string;              // note whose "Activity tags" table lists the Clockify tags
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -37,7 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   deepMinutes: 90,
   mergeGapMinutes: 5,
   autoRun: true,
-  tags: ["Travel", "Install", "Fab", "Site visit", "Design", "PM", "Concierge", "Admin", "Estimating"],
+  tagsNote: "Job Code Convention",
 };
 
 export const codeOf = (s: string | null | undefined): string | null => {

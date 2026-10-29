@@ -54,9 +54,10 @@ export function planSync(notes: CodedNote[], projects: Named[], clients: Named[]
 
 export const planIsEmpty = (p: SyncPlan) => !p.createClients.length && !p.createProjects.length && !p.createTags.length;
 
-export function renderPlan(p: SyncPlan, heading: string, results?: string[]): string {
+export function renderPlan(p: SyncPlan, heading: string, results?: string[], tagSource?: string): string {
   const list = (xs: string[]) => (xs.length ? xs.map(x => `- ${x}`).join("\n") : "- None");
   const L = ["---", "type: ledger-sync", "---", `# ${heading}`, ""];
+  if (tagSource) L.push(`Tag source: ${tagSource}`, "");
   if (results) L.push("## Results", list(results), "");
   L.push(
     `Projects already in Clockify with matching names: ${p.alreadyPresent}`, "",
@@ -70,4 +71,26 @@ export function renderPlan(p: SyncPlan, heading: string, results?: string[]): st
     "### Name differs only in case", list(p.caseMismatches.map(m => `note "${m.note}" vs Clockify "${m.clockify}"`)),
     "");
   return L.join("\n");
+}
+
+/**
+ * Read activity tags from the first table under a heading that starts with "Activity tags".
+ * The first column of each body row is the tag name. Stops at the next heading.
+ */
+export function parseTagTable(md: string): string[] {
+  const lines = md.split(/\r?\n/);
+  const start = lines.findIndex(l => /^#{1,6}\s+Activity tags\b/i.test(l));
+  if (start < 0) return [];
+  const out: string[] = [];
+  let header = true;
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(line)) break;
+    const t = line.trim();
+    if (!t.startsWith("|")) { if (out.length) break; continue; }
+    const cell = t.slice(1).split("|")[0].trim().replace(/[`*_]/g, "").trim();
+    if (/^:?-{2,}:?$/.test(cell)) continue;
+    if (header) { header = false; continue; }
+    if (cell) out.push(cell);
+  }
+  return out;
 }

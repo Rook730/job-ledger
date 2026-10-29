@@ -4,7 +4,7 @@ import { dedupe, parseIcs } from "./ics.ts";
 import { weekReport } from "./metrics.ts";
 import { DEFAULT_SETTINGS, Interval, Settings, addDays, codeOf, weekStart, ymd, ymdDots } from "./model.ts";
 import { render } from "./render.ts";
-import { CodedNote, SyncPlan, planIsEmpty, planSync, renderPlan } from "./sync.ts";
+import { CodedNote, SyncPlan, parseTagTable, planIsEmpty, planSync, renderPlan } from "./sync.ts";
 
 const http: Http = async (url, init) => {
   const r = await requestUrl({ url, method: init.method ?? "GET", headers: init.headers, body: init.body, throw: false });
@@ -122,19 +122,32 @@ export default class JobLedger extends Plugin {
     return out;
   }
 
+  /** Activity tags from the "Activity tags" table in the configured note. Single source of truth. */
+  async readTags(): Promise<{ tags: string[]; source: string }> {
+    const name = this.settings.tagsNote.trim().replace(/\.md$/, "");
+    if (!name) return { tags: [], source: "none configured; tags skipped" };
+    const f = this.app.metadataCache.getFirstLinkpathDest(name, "");
+    if (!f) return { tags: [], source: `**note "${name}" not found; tags skipped**` };
+    const tags = parseTagTable(await this.app.vault.cachedRead(f));
+    return tags.length
+      ? { tags, source: `[[${f.basename}]] (${tags.length} tags)` }
+      : { tags: [], source: `**no table under an "Activity tags" heading in [[${f.basename}]]; tags skipped**` };
+  }
+
   /** Preview what is missing in Clockify, confirm, then create it. */
   async sync() {
     const st = this.settings;
     if (!st.clockifyKey) { new Notice("Job Ledger: set the Clockify API key first."); return; }
     const c = new Clockify(http, st.clockifyKey, st.workspaceId);
+    const tagSrc = await this.readTags();
     let ws = "", plan: SyncPlan;
     try {
       ws = (await c.whoami()).workspaceId;
       const [ps, cs, ts] = await Promise.all([c.projects(ws), c.clients(ws), c.tags(ws)]);
-      plan = planSync(this.codedNotes(), ps, cs, ts, st.tags);
+      plan = planSync(this.codedNotes(), ps, cs, ts, tagSrc.tags);
     } catch (e) { new Notice(`Job Ledger sync failed: ${(e as Error).message}`, 10000); return; }
 
-    await this.writeNote("Clockify Sync", renderPlan(plan, "Clockify sync: preview (nothing created yet)"), true);
+    await this.writeNote("Clockify Sync", renderPlan(plan, "Clockify sync: preview (nothing created yet)", undefined, tagSrc.source), true);
     if (planIsEmpty(plan)) { new Notice("Job Ledger: Clockify already matches your coded notes."); return; }
 
     const ok = await confirm(this.app,
@@ -160,7 +173,7 @@ export default class JobLedger extends Plugin {
       }
     } catch (e) { results.push(`**Failed**: ${(e as Error).message}`); }
 
-    await this.writeNote("Clockify Sync", renderPlan(plan, `Clockify sync: applied ${ymd(new Date())}`, results), true);
+    await this.writeNote("Clockify Sync", renderPlan(plan, `Clockify sync: applied ${ymd(new Date())}`, results, tagSrc.source), true);
     const failed = results.filter(r => r.startsWith("**Failed")).length;
     new Notice(`Job Ledger: sync done. ${results.length - failed} created${failed ? `, ${failed} failed` : ""}.`, 8000);
   }
@@ -302,8 +315,9 @@ class LedgerSettings extends PluginSettingTab {
       .addToggle(t => t.setValue(st.autoRun).onChange(v => { st.autoRun = v; void save(); }));
 
     new Setting(containerEl).setName("Clockify sync").setHeading();
-    new Setting(containerEl).setName("Activity tags").setDesc("Comma-separated. Sync creates any that are missing in Clockify; it never deletes or renames.")
-      .addTextArea(t => t.setValue(st.tags.join(", ")).onChange(v => { st.tags = v.split(",").map(x => x.trim()).filter(Boolean); void save(); }));
+    new Setting(containerEl).setName("Tags note")
+      .setDesc('Note with an "Activity tags" heading followed by a table; the first column is the tag name. Sync creates any tag missing in Clockify; it never deletes or renames.')
+      .addText(t => t.setValue(st.tagsNote).onChange(v => { st.tagsNote = v.trim(); void save(); }));
     new Setting(containerEl)
       .addButton(b => b.setButtonText("Sync projects to Clockify").onClick(() => this.plugin.sync()))
       .addButton(b => b.setButtonText("Test connections").setCta().onClick(() => this.plugin.test()));

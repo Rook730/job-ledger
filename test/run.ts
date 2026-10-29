@@ -5,7 +5,8 @@ import { weekReport, blocks } from "../src/metrics.ts";
 import { render } from "../src/render.ts";
 import { Clockify } from "../src/clockify.ts";
 import { DEFAULT_SETTINGS, Interval, weekStart, addDays } from "../src/model.ts";
-import { planSync, defaultBillable, renderPlan } from "../src/sync.ts";
+import { planSync, defaultBillable, renderPlan, parseTagTable } from "../src/sync.ts";
+import { readFileSync } from "node:fs";
 
 const ICS = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -181,6 +182,13 @@ assert.deepEqual(plan.createTags, ["Install"]);
 assert.deepEqual(plan.archivedMatches, ["CE-26002 Tandem machine"]);
 assert.equal(plan.caseMismatches.length, 1);
 console.log("\n" + renderPlan(plan, "Clockify sync: preview"));
+
+// Tag table parsing: the user's convention note (Obsidian-formatted table with padding and alignment)
+const conv = readFileSync(new URL("./fixtures/convention.md", import.meta.url), "utf8");
+assert.deepEqual(parseTagTable(conv), ["Project Management", "Consultation", "Design", "Estimating", "Site visit", "Fabrication",
+  "Install", "Service", "Preventative maintenance", "Concierge", "Administrative", "Travel"]);
+assert.deepEqual(parseTagTable("## Activity tags\n\n| Tag | Use |\n| :--- | ---: |\n| `Travel` | x |\n| **PM** | y |\n\nText\n| Stray | z |"), ["Travel", "PM"]);
+assert.deepEqual(parseTagTable("# Other\n| Tag |\n|---|\n| X |"), []);
 
 const md = render(r, DEFAULT_SETTINGS, new Date(2026, 10, 1));
 assert.ok(!md.includes("—"), "no em dashes");

@@ -18,7 +18,7 @@ Frontmatter carries the headline numbers, so `Job Ledger.base` can trend them we
 
 ## Clockify sync
 
-*Sync projects to Clockify* finds every note whose `code` property is a job code and whose name starts with it, then creates the matching Clockify project (same name), its client (from the note's `client` property), and any missing activity tags from settings. It writes a preview to `Job Ledger/Clockify Sync.md` and asks before creating anything. It never renames, archives, or deletes.
+*Sync projects to Clockify* finds every note whose `code` property is a job code and whose name starts with it, then creates the matching Clockify project (same name), its client (from the note's `client` property), and any missing activity tags. Tags are read from the table under the "Activity tags" heading in the note named in settings (default `Job Code Convention`); the first column is the tag name. It writes a preview to `Job Ledger/Clockify Sync.md` and asks before creating anything. It never renames, archives, or deletes.
 
 - Billable: on for CE/CW/KS jobs, off for `-OH`, PR, and CK. Override with `billable: false` (or `true`) in the note.
 - Left alone and listed: names that exist only as archived projects, and names that differ only in case.
